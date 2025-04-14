@@ -1343,21 +1343,19 @@ class BonPrelevement extends CommonObject
 			if (!$error) {
 				$ref = substr($year, -2) . $month;
 
-				// Get next free number for the ref of bon prelevement
-				$sql = "SELECT substring(ref from char_length(ref) - 1)";	// To extract "YYMMXX" from "TYYMMXX"
+				 // Modification de la logique de génération de la référence pour éviter les conflits après 100 entrées
+				$sql = "SELECT MAX(CAST(SUBSTRING(ref, LENGTH(ref) - 2) AS UNSIGNED)) AS max_ref";
 				$sql .= " FROM " . MAIN_DB_PREFIX . "prelevement_bons";
 				$sql .= " WHERE ref LIKE '_" . $this->db->escape($ref) . "%'";
 				$sql .= " AND entity = " . ((int) $conf->entity);
-				$sql .= " ORDER BY ref DESC LIMIT 1";
 
 				dol_syslog(get_class($this) . " get next free number", LOG_DEBUG);
 				$resql = $this->db->query($sql);
 
 				if ($resql) {
-					$row = $this->db->fetch_row($resql);
-
-					// Build the new ref
-					$ref = "T" . $ref . sprintf("%02d", (intval($row[0]) + 1));
+					$obj = $this->db->fetch_object($resql);
+					$next_number = ($obj && $obj->max_ref) ? $obj->max_ref + 1 : 1;
+					$this->ref = 'T' . $ref . sprintf('%03d', $next_number);
 
 					// $conf->abc->dir_output may be:
 					// /home/ldestailleur/git/dolibarr_15.0/documents/abc/
@@ -1374,16 +1372,16 @@ class BonPrelevement extends CommonObject
 
 					if (isModEnabled('multicompany')) {
 						$labelentity = $conf->entity;
-						$this->filename = $dir . '/' . $ref . '-' . $labelentity . '.xml';
+						$this->filename = $dir . '/' . $this->ref . '-' . $labelentity . '.xml';
 					} else {
-						$this->filename = $dir . '/' . $ref . '.xml';
+						$this->filename = $dir . '/' . $this->ref . '.xml';
 					}
 
 					// Create withdraw order in database
 					$sql = "INSERT INTO " . MAIN_DB_PREFIX . "prelevement_bons (";
 					$sql .= "ref, entity, datec, type, fk_bank_account";
 					$sql .= ") VALUES (";
-					$sql .= "'" . $this->db->escape($ref) . "'";
+					$sql .= "'" . $this->db->escape($this->ref) . "'";
 					$sql .= ", " . ((int) $conf->entity);
 					$sql .= ", '" . $this->db->idate($now) . "'";
 					$sql .= ", '" . ($type == 'bank-transfer' ? 'bank-transfer' : 'debit-order') . "'";
@@ -1396,7 +1394,6 @@ class BonPrelevement extends CommonObject
 					if ($resql) {
 						$prev_id = $this->db->last_insert_id(MAIN_DB_PREFIX . "prelevement_bons");
 						$this->id = $prev_id;
-						$this->ref = $ref;
 					} else {
 						$error++;
 						dol_syslog(__METHOD__ . " Create withdraw receipt " . $this->db->lasterror(), LOG_ERR);
@@ -1462,7 +1459,7 @@ class BonPrelevement extends CommonObject
 
 				if (count($factures_prev) > 0) {
 					$this->date_echeance = $datetimeprev;
-					$this->reference_remise = $ref;
+					$this->reference_remise = $this->ref;
 
 					$account = new Account($this->db);
 					if ($account->fetch($fk_bank_account) > 0) {
@@ -2628,7 +2625,6 @@ class BonPrelevement extends CommonObject
 				$XML_SEPA_INFO .= '				<FinInstnId>' . $CrLf;
 				$XML_SEPA_INFO .= '					<BIC>' . $this->emetteur_bic . '</BIC>' . $CrLf;
 				$XML_SEPA_INFO .= '				</FinInstnId>' . $CrLf;
-				$XML_SEPA_INFO .= '			</CdtrAgt>' . $CrLf;
 				/* $XML_SEPA_INFO .= '			<UltmtCdtr>'.$CrLf;
 				 $XML_SEPA_INFO .= '				<Nm>'.dolEscapeXML(strtoupper(dol_string_nospecial(dol_string_unaccent($this->raison_sociale), ' '))).'</Nm>'.$CrLf;
 				 $XML_SEPA_INFO .= '				<PstlAdr>'.$CrLf;
@@ -2694,7 +2690,6 @@ class BonPrelevement extends CommonObject
 				$XML_SEPA_INFO .= '				<FinInstnId>' . $CrLf;
 				$XML_SEPA_INFO .= '					<BIC>' . $this->emetteur_bic . '</BIC>' . $CrLf;
 				$XML_SEPA_INFO .= '				</FinInstnId>' . $CrLf;
-				$XML_SEPA_INFO .= '			</DbtrAgt>' . $CrLf;
 				/* $XML_SEPA_INFO .= '			<UltmtCdtr>'.$CrLf;
 				 $XML_SEPA_INFO .= '				<Nm>'.dolEscapeXML(strtoupper(dol_string_nospecial(dol_string_unaccent($this->raison_sociale), ' '))).'</Nm>'.$CrLf;
 				 $XML_SEPA_INFO .= '				<PstlAdr>'.$CrLf;
@@ -2828,9 +2823,9 @@ class BonPrelevement extends CommonObject
 		$statusType = 'status1';
 		if ($status == self::STATUS_TRANSFERED) {
 			$statusType = 'status3';
-		}
-		if ($status == self::STATUS_CREDITED || $status == self::STATUS_DEBITED) {
-			$statusType = 'status6';
+			if ($status == self::STATUS_CREDITED || $status == self::STATUS_DEBITED) {
+				$statusType = 'status6';
+			}
 		}
 
 		return dolGetStatus($this->labelStatus[$status], $this->labelStatusShort[$status], '', $statusType, $mode);
